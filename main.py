@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 from telegram.constants import ParseMode
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -20,6 +22,22 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 STATE_FILE = "bot_state.json"
 START_TIME = datetime.now()
 
+# --- DUMMY WEB SERVER FOR FREE HOSTING (RENDER) ---
+def run_health_check_server():
+    class HealthCheckHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Bot is alive!")
+        def log_message(self, format, *args): return # Silence logs
+    
+    port = int(os.environ.get("PORT", 8000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    print(f"🌍 Health check server started on port {port}")
+    server.serve_forever()
+
+# --- STATE MANAGEMENT ---
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -33,13 +51,13 @@ def save_state(state):
 state = load_state()
 if "alerts" not in state or not state["alerts"]:
     state["alerts"] = {
-        "BTC": {"targets": [{"val": 90000, "above": True}, {"val": 70000, "above": False}], "threshold": -5.0},
+        "BTC": {"targets": [{"val": 105000, "above": True}, {"val": 70000, "above": False}], "threshold": -5.0},
         "ETH": {"targets": [{"val": 4000, "above": True}, {"val": 2000, "above": False}], "threshold": -5.0},
-        "SOL": {"targets": [{"val": 120, "above": True}, {"val": 50, "above": False}], "threshold": -5.0},
-        "SUI": {"targets": [{"val": 2.0, "above": True}, {"val": 1.02, "above": False}], "threshold": -5.0},
+        "SOL": {"targets": [{"val": 250, "above": True}, {"val": 80, "above": False}], "threshold": -5.0},
+        "SUI": {"targets": [{"val": 5.0, "above": True}, {"val": 1.05, "above": False}], "threshold": -5.0},
         "HYPE": {"targets": [{"val": 50, "above": True}, {"val": 35, "above": False}], "threshold": -8.0},
-        "GOLD": {"targets": [{"val": 4900, "above": True}, {"val": 3900, "above": False}], "threshold": -2.0},
-        "SILVER": {"targets": [{"val": 95, "above": True}, {"val": 65, "above": False}], "threshold": -3.0},
+        "GOLD": {"targets": [{"val": 2800, "above": True}, {"val": 2300, "above": False}], "threshold": -2.0},
+        "SILVER": {"targets": [{"val": 35, "above": True}, {"val": 28, "above": False}], "threshold": -3.0},
     }
 if "frequency" not in state: state["frequency"] = 300
 save_state(state)
@@ -49,9 +67,7 @@ async def fetch_fear_greed():
         async with httpx.AsyncClient() as client:
             resp = await client.get("https://api.alternative.me/fng/", timeout=10)
             data = resp.json()
-            val = data["data"][0]["value"]
-            label = data["data"][0]["value_classification"]
-            return f"🎭 **Fear & Greed Index**: {val} ({label})"
+            return f"🎭 **Fear & Greed Index**: {data['data'][0]['value']} ({data['data'][0]['value_classification']})"
     except: return None
 
 async def fetch_market_data():
@@ -186,6 +202,9 @@ async def scheduled_check(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=CHAT_ID, text=await generate_report(), parse_mode=ParseMode.MARKDOWN)
 
 if __name__ == "__main__":
+    # Start the dummy web server in a background thread for Render
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+    
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
