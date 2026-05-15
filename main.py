@@ -18,6 +18,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 METALS_API_KEY = os.getenv("METALS_DEV_API_KEY")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL") # Render provides this automatically
 
 STATE_FILE = "bot_state.json"
 START_TIME = datetime.now()
@@ -30,11 +31,10 @@ def run_health_check_server():
             self.send_header("Content-type", "text/plain")
             self.end_headers()
             self.wfile.write(b"Bot is alive!")
-        def log_message(self, format, *args): return # Silence logs
+        def log_message(self, format, *args): return
     
     port = int(os.environ.get("PORT", 8000))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"🌍 Health check server started on port {port}")
     server.serve_forever()
 
 # --- STATE MANAGEMENT ---
@@ -201,10 +201,17 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scheduled_check(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=CHAT_ID, text=await generate_report(), parse_mode=ParseMode.MARKDOWN)
 
+# --- ANTI-SLEEP TASK FOR RENDER ---
+async def self_ping(context: ContextTypes.DEFAULT_TYPE):
+    if RENDER_URL:
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.get(RENDER_URL, timeout=10)
+                print(f"💤 Anti-sleep ping sent to {RENDER_URL}")
+        except: print("⚠️ Anti-sleep ping failed")
+
 if __name__ == "__main__":
-    # Start the dummy web server in a background thread for Render
     threading.Thread(target=run_health_check_server, daemon=True).start()
-    
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -215,4 +222,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("frequency", frequency_command))
     app.add_handler(CommandHandler("status", status_command))
     app.job_queue.run_repeating(scheduled_check, interval=state["frequency"], first=5, name="scheduled_check")
+    
+    # Add anti-sleep ping every 10 minutes
+    app.job_queue.run_repeating(self_ping, interval=600, first=600)
+    
     app.run_polling()
