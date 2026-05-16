@@ -41,8 +41,8 @@ def load_state():
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f: return json.load(f)
-        except: return {"alerts": {}, "frequency": 300}
-    return {"alerts": {}, "frequency": 300}
+        except: return {"alerts": {}, "frequency": 300, "last_prices": {}}
+    return {"alerts": {}, "frequency": 300, "last_prices": {}}
 
 def save_state(state):
     with open(STATE_FILE, "w") as f: json.dump(state, f)
@@ -59,6 +59,7 @@ if "alerts" not in state or not state["alerts"]:
         "SILVER": {"targets": [{"val": 35, "above": True}, {"val": 28, "above": False}], "threshold": -3.0},
     }
 if "frequency" not in state: state["frequency"] = 300
+if "last_prices" not in state: state["last_prices"] = {}
 save_state(state)
 
 async def fetch_fear_greed():
@@ -71,7 +72,6 @@ async def fetch_fear_greed():
 
 async def fetch_market_data():
     async with httpx.AsyncClient() as client:
-        # Crypto
         crypto_ids = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "SUI": "sui", "HYPE": "hyperliquid"}
         ids_str = ",".join(crypto_ids.values())
         base_url = "https://api.coingecko.com/api/v3" if COINGECKO_API_KEY.startswith("CG-") else "https://pro-api.coingecko.com/api/v3"
@@ -82,10 +82,12 @@ async def fetch_market_data():
             resp = await client.get(cg_url, headers=cg_headers, timeout=15)
             raw = resp.json()
             for symbol, cid in crypto_ids.items():
-                if cid in raw: market_data[symbol] = {"price": raw[cid]["usd"], "change": raw[cid].get("usd_24h_change", 0)}
-        except Exception as e: print(f"CG Fetch Error: {e}")
+                if cid in raw:
+                    p, c = raw[cid]["usd"], raw[cid].get("usd_24h_change", 0)
+                    market_data[symbol] = {"price": p, "change": c}
+                    state["last_prices"][symbol] = {"price": p, "change": c}
+        except: pass
 
-        # Metals
         for m_symbol in ["GOLD", "SILVER"]:
             try:
                 metal = "gold" if m_symbol == "GOLD" else "silver"
@@ -93,10 +95,16 @@ async def fetch_market_data():
                 m_resp = await client.get(m_url, timeout=15)
                 m_data = m_resp.json()
                 if m_data.get("status") == "success":
-                    market_data[m_symbol] = {"price": float(m_data["rate"]["price"]), "change": float(m_data["rate"]["change_percent"])}
-                else:
-                    print(f"Metals API Status Error for {m_symbol}: {m_data.get('message', 'Unknown error')}")
-            except Exception as e: print(f"Metals Fetch Error for {m_symbol}: {e}")
+                    p, c = float(m_data["rate"]["price"]), float(m_data["rate"]["change_percent"])
+                    market_data[m_symbol] = {"price": p, "change": c}
+                    state["last_prices"][m_symbol] = {"price": p, "change": c}
+            except: pass
+            
+            # Weekend/Failover logic: Use last known price if API fails
+            if m_symbol not in market_data and m_symbol in state["last_prices"]:
+                market_data[m_symbol] = state["last_prices"][m_symbol]
+        
+        save_state(state)
         return market_data
 
 async def generate_report():
