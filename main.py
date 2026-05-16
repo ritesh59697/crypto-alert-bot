@@ -18,12 +18,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 METALS_API_KEY = os.getenv("METALS_DEV_API_KEY")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL") # Render provides this automatically
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 STATE_FILE = "bot_state.json"
 START_TIME = datetime.now()
 
-# --- DUMMY WEB SERVER FOR FREE HOSTING (RENDER) ---
+# --- DUMMY WEB SERVER ---
 def run_health_check_server():
     class HealthCheckHandler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -32,7 +32,6 @@ def run_health_check_server():
             self.end_headers()
             self.wfile.write(b"Bot is alive!")
         def log_message(self, format, *args): return
-    
     port = int(os.environ.get("PORT", 8000))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
@@ -72,6 +71,7 @@ async def fetch_fear_greed():
 
 async def fetch_market_data():
     async with httpx.AsyncClient() as client:
+        # Crypto
         crypto_ids = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "SUI": "sui", "HYPE": "hyperliquid"}
         ids_str = ",".join(crypto_ids.values())
         base_url = "https://api.coingecko.com/api/v3" if COINGECKO_API_KEY.startswith("CG-") else "https://pro-api.coingecko.com/api/v3"
@@ -83,7 +83,9 @@ async def fetch_market_data():
             raw = resp.json()
             for symbol, cid in crypto_ids.items():
                 if cid in raw: market_data[symbol] = {"price": raw[cid]["usd"], "change": raw[cid].get("usd_24h_change", 0)}
-        except: pass
+        except Exception as e: print(f"CG Fetch Error: {e}")
+
+        # Metals
         for m_symbol in ["GOLD", "SILVER"]:
             try:
                 metal = "gold" if m_symbol == "GOLD" else "silver"
@@ -92,7 +94,9 @@ async def fetch_market_data():
                 m_data = m_resp.json()
                 if m_data.get("status") == "success":
                     market_data[m_symbol] = {"price": float(m_data["rate"]["price"]), "change": float(m_data["rate"]["change_percent"])}
-            except: pass
+                else:
+                    print(f"Metals API Status Error for {m_symbol}: {m_data.get('message', 'Unknown error')}")
+            except Exception as e: print(f"Metals Fetch Error for {m_symbol}: {e}")
         return market_data
 
 async def generate_report():
@@ -201,14 +205,12 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scheduled_check(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=CHAT_ID, text=await generate_report(), parse_mode=ParseMode.MARKDOWN)
 
-# --- ANTI-SLEEP TASK FOR RENDER ---
 async def self_ping(context: ContextTypes.DEFAULT_TYPE):
     if RENDER_URL:
         try:
             async with httpx.AsyncClient() as client:
                 await client.get(RENDER_URL, timeout=10)
-                print(f"💤 Anti-sleep ping sent to {RENDER_URL}")
-        except: print("⚠️ Anti-sleep ping failed")
+        except: pass
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_check_server, daemon=True).start()
@@ -222,8 +224,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("frequency", frequency_command))
     app.add_handler(CommandHandler("status", status_command))
     app.job_queue.run_repeating(scheduled_check, interval=state["frequency"], first=5, name="scheduled_check")
-    
-    # Add anti-sleep ping every 10 minutes
     app.job_queue.run_repeating(self_ping, interval=600, first=600)
-    
     app.run_polling()
