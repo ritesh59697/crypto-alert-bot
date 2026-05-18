@@ -5,7 +5,7 @@ import httpx
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 from telegram.constants import ParseMode
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -245,7 +245,19 @@ async def self_ping(context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_check_server, daemon=True).start()
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    async def post_init(application):
+        await application.bot.set_my_commands([
+            BotCommand("now", "Instant market update"),
+            BotCommand("targets", "View all active alerts"),
+            BotCommand("setalert", "Set a new price alert"),
+            BotCommand("delete", "Remove a price alert"),
+            BotCommand("frequency", "Change update frequency"),
+            BotCommand("status", "Check bot status and health"),
+            BotCommand("help", "Show all commands description")
+        ])
+
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("now", now_command))
