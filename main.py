@@ -72,7 +72,16 @@ async def fetch_fear_greed():
 
 async def fetch_market_data():
     async with httpx.AsyncClient() as client:
-        crypto_ids = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "SUI": "sui", "HYPE": "hyperliquid"}
+        # Fetch crypto prices (including PAXG and KAG as reference for gold/silver change)
+        crypto_ids = {
+            "BTC": "bitcoin",
+            "ETH": "ethereum",
+            "SOL": "solana",
+            "SUI": "sui",
+            "HYPE": "hyperliquid",
+            "PAXG": "pax-gold",
+            "KAG": "kinesis-silver"
+        }
         ids_str = ",".join(crypto_ids.values())
         base_url = "https://api.coingecko.com/api/v3" if COINGECKO_API_KEY.startswith("CG-") else "https://pro-api.coingecko.com/api/v3"
         cg_url = f"{base_url}/simple/price?ids={ids_str}&vs_currencies=usd&include_24hr_change=true"
@@ -84,23 +93,37 @@ async def fetch_market_data():
             for symbol, cid in crypto_ids.items():
                 if cid in raw:
                     p, c = raw[cid]["usd"], raw[cid].get("usd_24h_change", 0)
-                    market_data[symbol] = {"price": p, "change": c}
+                    if symbol not in ["PAXG", "KAG"]:
+                        market_data[symbol] = {"price": p, "change": c}
                     state["last_prices"][symbol] = {"price": p, "change": c}
-        except: pass
+        except Exception as e:
+            print(f"CG Fetch Error: {e}")
 
+        # Fetch Spot Gold & Silver prices using completely free Gold-API.com
         for m_symbol in ["GOLD", "SILVER"]:
             try:
-                metal = "gold" if m_symbol == "GOLD" else "silver"
-                m_url = f"https://api.metals.dev/v1/metal/spot?api_key={METALS_API_KEY}&metal={metal}&currency=USD"
+                symbol_code = "XAU" if m_symbol == "GOLD" else "XAG"
+                cg_ref = "PAXG" if m_symbol == "GOLD" else "KAG"
+                m_url = f"https://api.gold-api.com/price/{symbol_code}"
                 m_resp = await client.get(m_url, timeout=15)
-                m_data = m_resp.json()
-                if m_data.get("status") == "success":
-                    p, c = float(m_data["rate"]["price"]), float(m_data["rate"]["change_percent"])
+                if m_resp.status_code == 200:
+                    m_data = m_resp.json()
+                    p = float(m_data["price"])
+                    # Use change from PAXG/KAG reference
+                    c = state["last_prices"].get(cg_ref, {}).get("change", 0)
                     market_data[m_symbol] = {"price": p, "change": c}
                     state["last_prices"][m_symbol] = {"price": p, "change": c}
-            except: pass
+                else:
+                    print(f"Gold-API Status Error for {m_symbol}: {m_resp.status_code}")
+            except Exception as e:
+                print(f"Gold-API Fetch Error for {m_symbol}: {e}")
             
-            # Weekend/Failover logic: Use last known price if API fails
+            # Failover 1: If Gold-API fails but CoinGecko succeeded, use CoinGecko token prices
+            if m_symbol not in market_data and cg_ref in state["last_prices"]:
+                market_data[m_symbol] = state["last_prices"][cg_ref]
+                state["last_prices"][m_symbol] = state["last_prices"][cg_ref]
+
+            # Failover 2: If everything fails, use last known price from state
             if m_symbol not in market_data and m_symbol in state["last_prices"]:
                 market_data[m_symbol] = state["last_prices"][m_symbol]
         
