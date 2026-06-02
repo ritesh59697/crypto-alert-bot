@@ -244,8 +244,6 @@ async def self_ping(context: ContextTypes.DEFAULT_TYPE):
         except: pass
 
 if __name__ == "__main__":
-    threading.Thread(target=run_health_check_server, daemon=True).start()
-
     async def post_init(application):
         await application.bot.set_my_commands([
             BotCommand("now", "Instant market update"),
@@ -268,4 +266,18 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("status", status_command))
     app.job_queue.run_repeating(scheduled_check, interval=state["frequency"], first=5, name="scheduled_check")
     app.job_queue.run_repeating(self_ping, interval=600, first=600)
-    app.run_polling()
+
+    port = int(os.environ.get("PORT", 8000))
+    if RENDER_URL:
+        # On Render, run using Webhooks to automatically handle spin-ups on new messages
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=BOT_TOKEN,
+            webhook_url=f"{RENDER_URL.rstrip('/')}/{BOT_TOKEN}"
+        )
+    else:
+        # Locally, run using Polling and start the health check server
+        threading.Thread(target=run_health_check_server, daemon=True).start()
+        app.run_polling()
+
