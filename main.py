@@ -5,8 +5,8 @@ import httpx
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.constants import ParseMode
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
@@ -150,7 +150,7 @@ async def generate_report():
             alerts.append(f"📉 **{asset} CRASHING**: {change_str} drop!")
         if change >= 0: pos.append(line)
         else: neg.append(line)
-    msg = f"📊 **MARKET UPDATE** ({datetime.now().strftime('%H:%M')})\n\n"
+    msg = f"📊 **MARKET UPDATE** ({datetime.now().strftime('%H:%M:%S')})\n\n"
     if fng: msg += f"{fng}\n\n"
     if alerts: msg += "🔔 **ALERTS**\n" + "\n".join(alerts) + "\n\n"
     if pos: msg += "📈 **POSITIVE (+)**\n" + "\n".join(pos) + "\n\n"
@@ -160,12 +160,17 @@ async def generate_report():
 
 # --- KEYBOARDS & CALLBACKS ---
 REFRESH_KEYBOARD = InlineKeyboardMarkup([
-    [InlineKeyboardButton("Refresh 🔄", callback_data="refresh")]
+    [InlineKeyboardButton("🔄 Refresh", callback_data="refresh")]
 ])
+
+REPLY_KEYBOARD = ReplyKeyboardMarkup(
+    [["🔄 Refresh"]],
+    resize_keyboard=True
+)
 
 async def refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer(text="Refreshed! 🔄")
     report_text = await generate_report()
     try:
         await query.edit_message_text(
@@ -177,9 +182,19 @@ async def refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "Message is not modified" not in str(e):
             print(f"Error in refresh_callback: {e}")
 
+async def refresh_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        await generate_report(),
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=REFRESH_KEYBOARD
+    )
+
 # --- COMMAND HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 C&C Alert Bot Online! Use /help to see all commands.")
+    await update.message.reply_text(
+        "👋 C&C Alert Bot Online! Use /help to see all commands.",
+        reply_markup=REPLY_KEYBOARD
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     freq_mins = state["frequency"] // 60
@@ -284,6 +299,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("frequency", frequency_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh$"))
+    app.add_handler(MessageHandler(filters.Regex(r"(?i)(refresh|🔄)"), refresh_message_handler))
     app.job_queue.run_repeating(scheduled_check, interval=state["frequency"], first=5, name="scheduled_check")
     app.job_queue.run_repeating(self_ping, interval=600, first=600)
 
