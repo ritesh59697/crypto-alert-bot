@@ -5,8 +5,8 @@ import httpx
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-from telegram import Update, BotCommand
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
@@ -158,6 +158,25 @@ async def generate_report():
     msg += f"\n\n_Prices per coin / troy ounce (Metals)_"
     return msg
 
+# --- KEYBOARDS & CALLBACKS ---
+REFRESH_KEYBOARD = InlineKeyboardMarkup([
+    [InlineKeyboardButton("Refresh 🔄", callback_data="refresh")]
+])
+
+async def refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    report_text = await generate_report()
+    try:
+        await query.edit_message_text(
+            text=report_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=REFRESH_KEYBOARD
+        )
+    except Exception as e:
+        if "Message is not modified" not in str(e):
+            print(f"Error in refresh_callback: {e}")
+
 # --- COMMAND HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 C&C Alert Bot Online! Use /help to see all commands.")
@@ -218,7 +237,7 @@ async def frequency_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: `/frequency 10`")
 
 async def now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(await generate_report(), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(await generate_report(), parse_mode=ParseMode.MARKDOWN, reply_markup=REFRESH_KEYBOARD)
 
 async def targets_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["🎯 **CURRENT TARGETS**\n"]
@@ -234,7 +253,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ **Online**\n⏱ **Uptime**: {uptime}\n🔔 **Frequency**: Every {freq} mins", parse_mode=ParseMode.MARKDOWN)
 
 async def scheduled_check(context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=CHAT_ID, text=await generate_report(), parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_message(chat_id=CHAT_ID, text=await generate_report(), parse_mode=ParseMode.MARKDOWN, reply_markup=REFRESH_KEYBOARD)
 
 async def self_ping(context: ContextTypes.DEFAULT_TYPE):
     if RENDER_URL:
@@ -264,6 +283,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("delete", delete_command))
     app.add_handler(CommandHandler("frequency", frequency_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh$"))
     app.job_queue.run_repeating(scheduled_check, interval=state["frequency"], first=5, name="scheduled_check")
     app.job_queue.run_repeating(self_ping, interval=600, first=600)
 
